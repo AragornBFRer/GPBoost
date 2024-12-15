@@ -1,1 +1,1 @@
-The imported figures are the same ones in the ../result folder.
+The imported figures are the same as the ones in the ../result folder.
