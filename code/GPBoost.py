@@ -1,6 +1,5 @@
+from scipy.spatial.distance import cdist
 from scipy.optimize import minimize
-from sklearn.tree import DecisionTreeRegressor
-from sklearn.metrics import mean_squared_error
 from sklearn.base import clone
 import numpy as np
 
@@ -34,6 +33,10 @@ class GPBoost:
         F = np.full(n_samples, self.F0)
         G_prev = None
 
+        self.X_train = X
+        self.y_train = y
+        self.Sigma_func = Sigma_func
+
         for m in range(self.n_iterations):
             bounds = [(1e-5, None)] * len(theta)
             theta = self.optimize_theta(y, F, theta, Sigma_func, bounds)
@@ -54,17 +57,43 @@ class GPBoost:
                 learner_m.fit(X, residual)
             elif self.boost_type == "hybrid":
                 gradient = np.linalg.solve(Sigma, residual)
-                learner_m.fit(X, gradient)
-
-            f_m = learner_m.predict(X)
-            F += self.learning_rate * f_m
+                hessian_diag = np.diag(np.linalg.inv(Sigma)).copy()
+                hessian_diag[hessian_diag == 0] = 1e-6
+                modified_gradient = gradient / hessian_diag
+                learner_m.fit(X, modified_gradient)
+            
+            F += self.learning_rate * learner_m.predict(X)
             self.base_learners.append(learner_m)
 
         self.theta = theta
 
+    def covariance_between_train_test(self, theta, X_train, X_new):
+        sigma1_squared, rho = theta
+        dists = cdist(X_train, X_new)
+        return sigma1_squared * np.exp(-dists / rho)
+
+    def covariance_matrix(self, theta, X):
+        sigma1_squared, rho = theta
+        dists = cdist(X, X)
+        return sigma1_squared * np.exp(-dists / rho) + np.eye(len(X)) * 1e-6
+
     def predict(self, X_new, base_learner):
-        F = np.full(X_new.shape[0], self.F0)
+        F_fixed = np.full(X_new.shape[0], self.F0)
         for learner in self.base_learners:
-            F += self.learning_rate * learner.predict(X_new)
-        return F
-    
+            F_fixed += self.learning_rate * learner.predict(X_new)
+
+        F_fixed_train = np.full(len(self.y_train), self.F0)
+        for learner in self.base_learners:
+            F_fixed_train += self.learning_rate * learner.predict(self.X_train)
+
+        residuals = self.y_train - F_fixed_train
+        K_train = self.Sigma_func(self.theta)
+        K_s = self.covariance_between_train_test(self.theta, self.X_train, X_new)
+        K_ss = self.covariance_matrix(self.theta, X_new)
+        noise_variance = 1e-6
+        K_train += np.eye(len(self.y_train)) * noise_variance
+
+        K_inv = np.linalg.inv(K_train)
+        F_random = K_s.T @ K_inv @ residuals
+
+        return F_fixed + F_random

@@ -2,7 +2,7 @@ import numpy as np
 from scipy.spatial.distance import cdist
 from scipy.stats import multivariate_normal
 
-np.random.seed(42)
+np.random.seed(22)
 
 def generate_fixed_effects(n, d=9, C=None):
     X = np.random.normal(0, 1, size=(n, d))
